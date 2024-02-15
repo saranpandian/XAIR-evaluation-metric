@@ -7,18 +7,18 @@ pt.init()
 
 import ir_datasets
 dataset = ir_datasets.load("msmarco-document/trec-dl-2020")
-# data = []
-# for doc in tqdm(dataset.docs_iter()):
-#     data.append([doc.doc_id, doc.body])
-#     # df.append({'docno': doc.doc_id, 'text': doc.body}, ignore_index=True)
-#     # row_to_append = pd.DataFrame([{'docno': doc.doc_id, 'text': doc.body}])
-#     # df = pd.concat([df,row_to_append])
-# # index the text, record the docnos as metadata
-# df = pd.DataFrame(data, columns=['docno','text'])
-# df.to_csv("collections.csv")
-# del data
-# pd_indexer = pt.DFIndexer("./pd_index")
-# indexref = pd_indexer.index(df["text"], df["docno"])
+data = []
+for doc in tqdm(dataset.docs_iter()):
+    data.append([doc.doc_id, doc.body])
+    # df.append({'docno': doc.doc_id, 'text': doc.body}, ignore_index=True)
+    # row_to_append = pd.DataFrame([{'docno': doc.doc_id, 'text': doc.body}])
+    # df = pd.concat([df,row_to_append])
+# index the text, record the docnos as metadata
+df = pd.DataFrame(data, columns=['docno','text'])
+df.to_csv("collections.csv")
+del data
+pd_indexer = pt.DFIndexer("./pd_index")
+indexref = pd_indexer.index(df["text"], df["docno"])
 
 qrel_data = []
 for qrel in dataset.qrels_iter():
