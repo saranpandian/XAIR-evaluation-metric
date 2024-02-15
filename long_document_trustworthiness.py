@@ -5,7 +5,7 @@ import ir_datasets
 import re
 import os
 from unidecode import unidecode
-os.environ["JAVA_HOME"] = "/home/irlab/java/jdk-11.0.17"
+os.environ["JAVA_HOME"] = "jdk-11.0.17"
 from pyterrier_colbert.indexing import ColBERTIndexer
 # import unicodedata
 import pyterrier_colbert.indexing
@@ -27,6 +27,34 @@ pt.init()
 # sys.stdout = open("output_log.txt", "w")
 nlp = English()
 nlp.add_pipe("sentencizer")
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import CountVectorizer
+import string
+
+def clean_string(text):
+    text = ''.join([word for word in text if word not in string.punctuation])
+    text = text.lower()
+    #text = ' '.join([word for word in text.split() if word not in stopwords])
+    return text
+
+def cosine_sim_vectors(vec1,vec2):
+    vec1 = vec1.reshape(1,-1)
+    vec2 = vec2.reshape(1,-1)
+    return cosine_similarity(vec1,vec2)[0][0]
+
+def similarity(sentence1, sentence2):
+    # if len(sentences)!=2:
+    #     return 'Error'
+    cleaned = list(map(clean_string, [sentence1, sentence2]))
+    vectorizer = CountVectorizer().fit_transform(cleaned)
+    vectors = vectorizer.toarray()
+    csim = cosine_similarity(vectors)
+    # lev = Levenshtein.distance(cleaned[0],cleaned[1])
+    cos = cosine_sim_vectors(vectors[0],vectors[1]) *100
+    # lev2 = Levenshtein.distance(cleaned2[0],cleaned2[1],)
+    return cos
+
+
 
 def model_select(model):
   if model=="ELECTRA":
@@ -67,7 +95,7 @@ class sentence_scorer:
     self.window_len = window_len
     self.nlp = nlp
     self.n_comb = n_comb
-    self.top_p = 5
+    self.top_p = 3
   def _sentence_score(self, query, doc):
 
     chunk_list = self.nlp(doc)
@@ -121,15 +149,28 @@ class sentence_scorer:
 
     sample_list = []
     d_len = len(self.sample_dict.keys())
-    samples_needed = int((d_len/k)*2)
-    if samples_needed>500:
-      samples_needed = 500
-    if d_len>3:
-      for n_comb in range(samples_needed):
+    print("length of documents: ",d_len)
+    comb_len = len([x for x in combinations(self.sample_dict.keys(), 2)])
+    # samples_needed = int((d_len)*2)
+    # if samples_needed>500:
+    #   samples_needed = 500
+    if d_len>1000 or comb_len>1000:
+      flag_samp = 1000
+      for n_comb in range(1000):
               # if d_len>3:
-              docs = random.sample(list(self.sample_dict.keys()),k=k)
-      # for n_comb in range(1,k):
-      #     for docs in combinations(self.sample_dict.keys(), n_comb):
+              if d_len<200:
+                docs = random.sample(list(self.sample_dict.keys()),k=k+20)
+              else:
+                docs = random.sample(list(self.sample_dict.keys()),k=int(d_len/2)+k)
+              temp_doc = doc
+              # if d_len!=1:
+              for sent in docs:
+                    temp_doc = temp_doc.replace(str(self.sample_dict[sent]),"")
+              sample_list.append([docs, temp_doc])
+    elif d_len<=1000 or comb_len<=1000:
+      flag_samp = 1
+      for n_comb in range(1,k):
+          for docs in combinations(self.sample_dict.keys(), n_comb):
               # else:
               #   docs = [list(self.sample_dict.keys())[n_comb]]
               # print(docs)
@@ -149,24 +190,23 @@ class sentence_scorer:
         for sent in docs:
           temp_doc = temp_doc.replace(str(self.sample_dict[sent]),"")
         sample_list.append([docs, temp_doc])
-    return sample_dict_scores, sample_dict_count, sample_list
+    return sample_dict_scores, sample_dict_count, sample_list, flag_samp
 
   ########scoring the document with masking for the given query######
   def masker(self, query, doc):
 
     pre_transform = []
-    sample_dict_scores, sample_dict_count, sample_list = self._sampler(doc, self.n_comb+1,'sent')
+    sample_dict_scores, sample_dict_count, sample_list, sample_len = self._sampler(doc, self.n_comb+1,'sent')
     for i, document in enumerate(sample_list):
       pre_transform.append(["q1",query,"d{}".format(i+1),document[1],document[0]])
     df_pre_transform = pd.DataFrame(pre_transform, columns=["qid", "query", "docno", "text","span"])
-
     temp_text_span = df_pre_transform[["docno","span"]]
     actual_score = self._sentence_score(query, doc)
     # score_df = self.textscorerTf.transform(df_pre_transform[["qid", "query", "docno", "text"]])
     df_pre_transform['score'] = df_pre_transform.progress_apply(lambda x: self._sentence_score(x['query'], x['text']), axis=1)
     # print(score_df)
-    df_pre_transform['score'] = abs(actual_score - df_pre_transform['score'])
-    return sample_dict_scores, sample_dict_count, df_pre_transform.merge(temp_text_span,on="docno")
+    df_pre_transform['score'] = actual_score - df_pre_transform['score']
+    return sample_dict_scores, sample_dict_count, df_pre_transform.merge(temp_text_span,on="docno"), sample_len
 
   # def span_wise_score(colbert_df_score):
 
@@ -174,34 +214,48 @@ class sentence_scorer:
   def top_p_span_list(self, qid, query, docid, doc):
 
     # print("The query is: \n",query)
-    sample_dict_scores, sample_dict_count, colbert_df_score = self.masker(query, doc)
+    sample_dict_scores, sample_dict_count, colbert_df_score, sample_len = self.masker(query, doc)
     def length(span):
       return len(span)
     # colbert_df_score['per_sent_score'] = colbert_df_score['score']/colbert_df_score['span'].apply(length)
     colbert_df_score['per_sent_score'] = colbert_df_score['score']/colbert_df_score['span_x'].apply(length)
+    colbert_df_score = colbert_df_score.sort_values(by = 'score', ascending = False)
     colbert_df_score_list = list(colbert_df_score['per_sent_score'])
     # colbert_df_span_list = list(colbert_df_score['span'])
     colbert_df_span_list = list(colbert_df_score['span_x'])
-    for spans,scores in zip(colbert_df_span_list, colbert_df_score_list):
+    ######################################################################################################################################
+    for spans,scores in zip(colbert_df_span_list[:5], colbert_df_score_list[:5]):
       for span in spans:
-        sample_dict_scores[span] = sample_dict_scores[span]+scores
-        sample_dict_count[span] = sample_dict_count[span]+1
-    for span in sample_dict_scores.keys():
-      if sample_dict_count[span]!=0:
-        sample_dict_scores[span] = sample_dict_scores[span]/sample_dict_count[span]
-      else:
-        pass
-    sample_dict_scores = {k: v for k, v in sorted(sample_dict_scores.items(), key=lambda item: item[1], reverse=True)}
+        if sample_len==1:
+          sample_dict_count[span] = sample_dict_count[span]+scores
+        elif sample_len==1000:
+          sample_dict_count[span] = sample_dict_count[span]+1
+    sample_dict_scores = {k: v for k, v in sorted(sample_dict_count.items(), key=lambda item: item[1], reverse=True)}
+    ######################################################################################################################################
+    ######################################################################################################################################
+    # for spans,scores in zip(colbert_df_span_list, colbert_df_score_list):
+    #   for span in spans:
+    #     sample_dict_scores[span] = sample_dict_scores[span]+scores
+    #     sample_dict_count[span] = sample_dict_count[span]+1
+    # for span in sample_dict_scores.keys():
+    #   if sample_dict_count[span]!=0:
+    #     sample_dict_scores[span] = sample_dict_scores[span]/sample_dict_count[span]
+    #   else:
+    #     pass
+    # sample_dict_scores = {k: v for k, v in sorted(sample_dict_scores.items(), key=lambda item: item[1], reverse=True)}
+    ########################################################################################################################################
+
     temp_sents1 = []
     temp_sents = []
     # print("The span and scores are: \n")
     # for key in sample_dict_scores.keys():
     #   print(self.sample_dict[key],"\t",sample_dict_scores[key],"\n")
-    top_p = list(sample_dict_scores.keys())[:self.top_p]
-    for key in sorted(top_p):
-      temp_sents1.append([qid,docid,str(self.sample_dict[key])])
+    top_p = list(sample_dict_scores)[:self.top_p]
+    print(top_p)
+    for key in top_p:
+      temp_sents1.append([qid,docid,key,str(self.sample_dict[key])])
       temp_sents.append(str(self.sample_dict[key]))
-    return pd.DataFrame(temp_sents1, columns=["qid", "docno", "span"]), " ".join(temp_sents)
+    return pd.DataFrame(temp_sents1, columns=["qid", "docno","sid", "span"]), " ".join(temp_sents), sample_len
   # def pseudo_fidelity_scores(self, query, doc):
 
   #   # print("The query is: \n",query)
@@ -241,21 +295,25 @@ def top_k_trust_out(df_top_k):
   query_list = np.unique(df_top_k['qid'])
   final_df_pseudo = []
   final_df_pseudo1 = []
+  len_of_samples = []
   # query_list = query_list[1:].copy()
   for qid in query_list:
 
     df_temp = df_top_k[df_top_k['qid']==qid]
     temp_span_list = []
+    temp_len_of_samples = []
     for query, docno, text in zip(df_temp['query'],df_temp['docno'],df_temp['text']):
-        temp1, temp = CRM.top_p_span_list(qid, query, docno, text)
+        temp1, temp, sample_len = CRM.top_p_span_list(qid, query, docno, text)
+        temp_len_of_samples.append(sample_len)
         final_df_pseudo.append(temp1)
         temp_span_list.append(temp)
+    len_of_samples.append(temp_len_of_samples)
     df_temp['pseudo_text'] = temp_span_list
     final_df_pseudo1.append(df_temp)
   # final_df_pseudo1.append(df_temp)
   df_test_top_k_trust = pd.concat(final_df_pseudo)
   df_test_top_k_fidelity = pd.concat(final_df_pseudo1)
-  return df_test_top_k_trust, df_test_top_k_fidelity
+  return df_test_top_k_trust, df_test_top_k_fidelity, len_of_samples
 
 # def top_k_pseudo_out(df_top_k):
 #   query_list = np.unique(df_top_k['qid'])
@@ -275,24 +333,26 @@ for doc in tqdm(dataset_test.qrels_iter()):
 
 doc_df_qrels = pd.DataFrame(doc_df_qrels)#.astype(str)
 doc_df_qrels.columns = ['qid','docno','label']
-print(doc_df_qrels)
+
 qid_list = list(doc_df_qrels['qid'].astype(int))
 
 df_test = pd.read_csv("document_level/BM25_top_10.csv")#.head(100)
-print(df_test)
-print(len(df_test[df_test['qid'].astype(int).isin(qid_list)]))
-df_test_top_k_trust, df_top_k_psuedo = top_k_trust_out(df_test[df_test['qid'].astype(int).isin(qid_list)])
+
+
+df_test_top_k_trust, df_top_k_psuedo, len_of_samples = top_k_trust_out(df_test[df_test['qid'].astype(int).isin(qid_list)])
+print(len_of_samples)
 df_top_k_psuedo = df_top_k_psuedo[['qid','docno','query','pseudo_text']].rename(columns = {'pseudo_text':'text'}).astype(str)
-print(df_top_k_psuedo)
+
 df_scores = model.transform(df_top_k_psuedo)
-print(df_scores)
+# df_scores.to_csv("pseudo_scores2.csv")
 df_scores = df_scores[['qid','docno','score']].sort_values(by = ['qid', 'score'], ascending = [True, False], na_position = 'first')
 new_df = pd.merge(df_scores.astype(str), df_test.astype(str), how='left', left_on=['qid','docno'], right_on = ['qid','docno'])
+# new_df.to_csv("pseudo_scores2.csv")
 corr_list = []
 for qid in np.unique(new_df['qid']):
-  temp_df_doc_psudo_doc = new_df[new_df['qid']==qid]
+  temp_df_doc_psudo_doc = new_df[new_df['qid']==qid].sort_values(by = ['score_y'], ascending = [False])
   print(temp_df_doc_psudo_doc['score_x'], temp_df_doc_psudo_doc['score_y'])
-  corr, _ = kendalltau(temp_df_doc_psudo_doc['score_x'], temp_df_doc_psudo_doc['score_y'])
+  corr, _ = kendalltau(np.argsort(temp_df_doc_psudo_doc['score_y'])[::-1], np.argsort(temp_df_doc_psudo_doc['score_x'])[::-1])
   corr_list.append(corr)
 print(corr_list)
 print('Kendall Rank correlation: %.5f' % np.mean(corr_list))
@@ -305,18 +365,23 @@ print('Kendall Rank correlation: %.5f' % np.mean(corr_list))
 # df_topk_rel_docs = df_test.merge(doc_rel_qrels,on=['qid','docno'])
 # print(df_topk_rel_docs)
 # df_top_k_psuedo = top_k_trust_out(df_topk_rel_docs)#[['qid','docno','pseudo_text']].rename(columns = {'pseudo_text':'text'})
-df_test_top_k_trust.to_csv("document_level/BM25_top_trust_10.csv")
+# df_test_top_k_trust.to_csv("document_level/BM25_top_trust_10.csv")
 df_documents = pd.read_csv("document_level/trustworthiness.csv").astype(str)
-df_documents.rename(columns = {'docid':'docno'},inplace=True)#['docno','text']
-# print(df_documents)
-df_top_k_rel_text_spans = (df_test_top_k_trust.astype(str).merge(df_documents,on='docno'))
-df_top_k_rel_text_spans['match scores'] = df_top_k_rel_text_spans.apply(lambda x: fuzz.partial_ratio(x['span'], x['text'])/100, axis=1)
+df_documents.rename(columns = {'docid':'docno1'},inplace=True)#['docno','text']
+df_documents.rename(columns = {'docno':'docid'},inplace=True)#['docno','text']
+df_documents.rename(columns = {'docno1':'docno'},inplace=True)#['docno','text']
 
-df_agg_top_k_rel_text_spans = (df_top_k_rel_text_spans.groupby(['qid','docno'])['match scores'].mean())
-df_agg_top_k_rel_text_spans_qid = df_agg_top_k_rel_text_spans.groupby(['qid']).mean()
-print(df_agg_top_k_rel_text_spans_qid)
+df_top_k_rel_text_spans = (df_test_top_k_trust.astype(str).merge(df_documents,on='docno'))
+
+df_top_k_rel_text_spans['match scores'] = df_top_k_rel_text_spans.apply(lambda x: similarity(x['span'], x['text'])/100, axis=1)
+# print(df_top_k_rel_text_spans.to_csv("document_level/trustworthiness_pass_scores.csv"))
+df_agg_top_k_rel_text_spans_sid = (df_top_k_rel_text_spans.groupby(['qid','docno',"sid"])['match scores'].max())
+
+df_agg_top_k_rel_text_spans_docid = (df_agg_top_k_rel_text_spans_sid.groupby(['qid','docno']).mean())
+df_agg_top_k_rel_text_spans_qid = df_agg_top_k_rel_text_spans_docid.groupby(['qid']).mean()
+
 trustworthiness_score = df_agg_top_k_rel_text_spans_qid.mean()
-print(trustworthiness_score)
+print('Trustworthiness correlation: %.5f' % trustworthiness_score)
 #df_top_k_psuedo.to_csv("")
 # print("loading maps")
 # df = pd.read_csv("data",sep = '\t', header=None).astype(str)
@@ -330,7 +395,7 @@ print(trustworthiness_score)
 # df_merge = df.merge(df_passages,on='docno')
 # print(len(df_merge))
 # print("start grouping")
-# df_temp = df_merge.groupby(['docid'], as_index = False)['text'].apply(' '.join)
+# df_temp = df_merge.sort_values(by = ['docid','docno'])#.apply(' '.join)
 # df_temp.to_csv("document_level/trustworthiness.csv")
 # print(len(df_temp))
 
@@ -343,5 +408,3 @@ print(trustworthiness_score)
 #     doc_df_qrels.append([doc.query_id,doc.doc_id, doc.relevance])
 # doc_df_qrels = pd.DataFrame(doc_df_qrels)
 # doc_df_qrels.columns = ['qid','docno','label']
-
-

@@ -1,7 +1,7 @@
 import pyterrier as pt
 import os
 from unidecode import unidecode
-os.environ["JAVA_HOME"] = "/home/irlab/java/jdk-11.0.17"
+os.environ["JAVA_HOME"] = "jdk-11.0.22"
 import pyterrier as pt
 from tqdm import tqdm
 import ir_datasets
@@ -14,19 +14,24 @@ import pandas as pd
 # from pyterrier_colbert.ranking import ColBERTFactory
 # from spacy.lang.en import English
 from itertools import combinations
-import spacy
+# import spacy
 import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
+import nltk
+nltk.download('punkt')
+from nltk.tokenize import sent_tokenize
+from nltk.tokenize import word_tokenize
 from scipy.stats import kendalltau
+nlp = "NULL"
 #from spaCy import *
 # nlp = spacy.load('en_core_web_sm')
 
-from spacy.lang.en import English
+# from spacy.lang.en import English
 import sys
 # sys.stdout = open("output_log.txt", "w")
-nlp = English()
-nlp.add_pipe("sentencizer")
+# nlp = English()
+# nlp.add_pipe("sentencizer")
 
 def model_select(model):
   if model=="ELECTRA":
@@ -70,14 +75,17 @@ class Create_sent_masker:
 
   ########sampling the document by masking the N choose k sentences######
   def _sampler(self, doc, k, span_type):
-    document = nlp(doc)
+    
     self.sample_dict = {}
     sample_dict_scores = {}
     if span_type=='sent':
-      for i, samp_sent in enumerate(list(document.sents)):
+      document = list(sent_tokenize(doc))
+      for i, samp_sent in enumerate(document):
         self.sample_dict["s"+str(i+1)] = samp_sent
+        # print(samp_sent)
         sample_dict_scores["s"+str(i+1)] = 0
     else:
+      document = list(word_tokenize(doc))
       my_list = document
       start = 0
       end = len(my_list)
@@ -85,7 +93,7 @@ class Create_sent_masker:
       count = 0
       for i in range(start, end, step):
         x = i
-        self.sample_dict["s"+str(count+1)] = my_list[x:x+step]
+        self.sample_dict["s"+str(count+1)] = " ".join(my_list[x:x+step])
         sample_dict_scores["s"+str(count+1)] = 0
         count+=1
 
@@ -113,7 +121,6 @@ class Create_sent_masker:
     temp_text_span = df_pre_transform[["docno","span"]]
     actual_score = self.actual_score(query, doc)
     score_df = self.textscorerTf.transform(df_pre_transform)
-    # print(score_df)
     score_df['score'] = abs(actual_score - score_df['score'])
     return sample_dict_scores, score_df.merge(temp_text_span,on="docno")
 
@@ -146,13 +153,13 @@ class Create_sent_masker:
     #   print(self.sample_dict[key],"\t",sample_dict_scores[key],"\n")
     top_p = list(sample_dict_scores.keys())[:self.top_p]
     for key in top_p:
-      temp_sents.append(str(self.sample_dict[key]))
+      temp_sents.append(self.sample_dict[key])
     return " ".join(temp_sents)
 
-model_name = 'TCTCOLBERT'
-top_explanations = 5
-top_k_documents = 50
-window_length = 5
+model_name = 'BM25'
+top_explanations = 3
+top_k_documents = 10
+window_length = 9
 span_type='word'
 model = model_select(model_name)
 print(model)
@@ -208,19 +215,20 @@ corr_list = []
 pearson_correlation = []
 for qid in np.unique(doc_df_qrels['qid']):
   temp_df_doc_psudo_doc = new_df[new_df['qid']==qid]
-  relevance = (pt.Experiment(
-    [temp_df_doc_psudo_doc[['qid','docno','score_x']].rename(columns = {'score_x':'score'})],
-    doc_df_test[doc_df_test['qid']==qid],
-    doc_df_qrels[doc_df_qrels['qid']==qid],
-    eval_metrics=[AP(rel=2)],
-    names=["BM25"]
-    )['AP(rel=2)'].values[0])
+  # relevance = (pt.Experiment(
+  #   [temp_df_doc_psudo_doc[['qid','docno','score_x']].rename(columns = {'score_x':'score'})],
+  #   doc_df_test[doc_df_test['qid']==qid],
+  #   doc_df_qrels[doc_df_qrels['qid']==qid],
+  #   eval_metrics=[AP(rel=2)],
+  #   names=["BM25"]
+  #   )['AP(rel=2)'].values[0])
 
-  ap_score = relevance
+  # ap_score = relevance
   fidleity_corr, _ = kendalltau(temp_df_doc_psudo_doc['rank_x'], temp_df_doc_psudo_doc['rank_y'])
   corr_list.append(fidleity_corr)
-  pearson_correlation.append([qid,ap_score,fidleity_corr])
+  # pearson_correlation.append([qid,ap_score,fidleity_corr])
+  pearson_correlation.append([qid,fidleity_corr])
 print(pd.DataFrame(pearson_correlation).to_csv("correlation/{}_correlation_top{}_window_s_{}_top_{}_exp values {}.csv".format(model_name,top_k_documents,window_length,top_explanations,span_type)))
-print(pd.DataFrame(pearson_correlation)[[1,2]].corr())
+# print(pd.DataFrame(pearson_correlation)[[1,2]].corr())
 print(corr_list)
-print('Kendall Rank correlation: %.5f' % np.mean(corr_list))
+print('Kendall Rank correlation: %.4f' % np.mean(corr_list))
