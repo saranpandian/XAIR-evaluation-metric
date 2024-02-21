@@ -6,4 +6,10 @@ This repository contains the PyTorch implemenatation of the following paper:
 python long_document_relelvance.py --model "ELECTRA" --window_length 3 --num_combinations 2
 
 ```
-# Finding the  
+# Finding the fidelity of sentences
+
+
+```shell
+python long_document_relelvance.py --model "ELECTRA" --window_length 3 --num_combinations 2
+
+```
