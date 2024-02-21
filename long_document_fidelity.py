@@ -32,6 +32,16 @@ import sys
 # sys.stdout = open("output_log.txt", "w")
 # nlp = English()
 # nlp.add_pipe("sentencizer")
+import pyparsing as pp
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--model', type=str, default='BM25', help='one of the following models (ELECTRA, COLBERT, TCTCOLBERT,MONOT5, BM25)')
+parser.add_argument('--top_explanations', type=int, default=3, help='Give the window size')
+parser.add_argument('--window_length', type=int, default=2, help='number of combinations of sentence pairs in passage')
+parser.add_argument('--span_type', type=str, default='word', help = 'if the evaluation is at word level or sentence level('word','sentence')')
+
+args = parser.parse_args()
 
 def model_select(model):
   if model=="ELECTRA":
@@ -156,11 +166,11 @@ class Create_sent_masker:
       temp_sents.append(self.sample_dict[key])
     return " ".join(temp_sents)
 
-model_name = 'BM25'
-top_explanations = 3
-top_k_documents = 10
-window_length = 9
-span_type='word'
+model_name = args.model
+top_explanations = args.top_explanations
+top_k_documents = args.top_k
+window_length = args.window_length
+span_type= args.span_type
 model = model_select(model_name)
 print(model)
 CRM = Create_sent_masker(nlp, model,top_explanations, window_length,span_type)
