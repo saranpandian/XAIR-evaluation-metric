@@ -10,6 +10,11 @@ python long_document_relelvance.py --model "ELECTRA" --window_length 3 --num_com
 
 
 ```shell
-python long_document_relelvance.py --model "ELECTRA" --window_length 3 --num_combinations 2
+python long_document_relelvance.py --model "ELECTRA" --window_length 3 --num_combinations 2 --top_k 10 --top_explanations 4 --span_type "word"
+
+```
+
+```shell
+python long_document_relelvance.py --model "ELECTRA" --num_combinations 2 --top_k 10 --top_explanations 4 --span_type "sent"
 
 ```
