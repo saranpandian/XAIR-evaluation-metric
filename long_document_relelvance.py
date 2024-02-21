@@ -16,7 +16,15 @@ from nltk.tokenize import sent_tokenize
 checkpoint="Checkpoint"
 import pandas as pd
 import inspect
+import pyparsing as pp
+import argparse
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--model', type=str, default='BM25', help='one of the following models (ELECTRA, COLBERT, TCTCOLBERT,MONOT5, BM25)')
+parser.add_argument('--window_length', type=int, default=3, help='Give the window size')
+parser.add_argument('--num_combinations', type=int, default=2, help='number of combinations of sentence pairs in passage')
+
+args = parser.parse_args()
 # checkpoint="colbert_model_checkpoint/colbert.dnn"
 # from pyterrier_colbert.ranking import ColBERTFactory
 # index=("colbert_passage","index_name")
@@ -132,10 +140,10 @@ def model_select(model):
     return model
 # pytcolbert = monoT5
 # textscorerTf = pytcolbert.text_scorer()
-model_name = 'ELECTRA'
+model_name = args.model
 model = model_select(model_name)
 
-CRM = sentence_scorer(window_len=3, n_comb=2, nlp=nlp, model=model)
+CRM = sentence_scorer(window_len=args.window_length, n_comb=args.num_combinations, nlp=nlp, model=model)
 print("-------------loading sentences-----------------")
 df = pd.read_csv("document_level/BM25_with_docs_1000.csv")#.head(10)
 
